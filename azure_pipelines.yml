@@ -1,0 +1,74 @@
+trigger:
+- main
+
+variables:
+  # 1. Application Repo Variables
+  acrServiceConnection: 'ACR-Service-Connection-Name' 
+  imageRepository: 'clients-api'
+  newImageTag: '$(Build.SourceVersion)' # Use the unique Git commit SHA
+  
+  # 2. GitOps Repo Variables
+  gitOpsRepoName: 'clients-api-gitops' # Name of your GitOps repo in Azure DevOps
+  gitOpsManifestPath: 'k8s/prod/clients-api-deployment.yaml' 
+  gitUsername: 'Azure-DevOps-Build-Service' 
+  gitEmail: 'azuredevops@deltacapita.com'
+
+stages:
+- stage: BuildAndTest
+  displayName: 'CI - Build, Test, and Trigger'
+  jobs:
+  - job: Build
+    displayName: 'Pipeline Job'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    # Needs access to both the application repo (self) and the GitOps repo
+    steps:
+    - checkout: self
+      displayName: 'Checkout Application Code'
+    
+    - task: NodeTool@0
+      displayName: 'Use Node.js 20.x'
+      inputs:
+        versionSpec: '20.x'
+
+    - script: |
+        npm install
+        npm run build
+        npm test -- --coverage
+      displayName: 'Build and Run Tests'
+
+    - task: Docker@2
+      displayName: 'Build and Push Docker Image'
+      inputs:
+        containerRegistry: '$(acrServiceConnection)'
+        repository: '$(imageRepository)'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: |
+          $(newImageTag)
+          latest
+          
+    ---
+    # GitOps Trigger (Argo CD Link)
+    # This step checks out the GitOps repo, modifies the image tag, and commits.
+    - checkout: $(gitOpsRepoName) 
+      displayName: 'Checkout GitOps Repo'
+      
+    - script: |
+        # Configure Git identity
+        git config user.email "$(gitEmail)"
+        git config user.name "$(gitUsername)"
+        
+        # Replace the image tag in the deployment manifest
+        # Ensure your target YAML file uses the appropriate image path to be replaced.
+        echo "Updating image tag to $(newImageTag) in $(gitOpsManifestPath)"
+        # Using sed to replace the full image path with the new tag
+        sed -i "s|image: .*/clients-api:.*|image: $(acrServiceConnection)/$(imageRepository):$(newImageTag)|" $(Build.SourcesDirectory)/$(gitOpsRepoName)/$(gitOpsManifestPath)
+        
+        # Commit and Push the change
+        cd $(Build.SourcesDirectory)/$(gitOpsRepoName)
+        git add $(gitOpsManifestPath)
+        git commit -m "\[AZURE DEVOPS] Automated image update for clients-api to $(newImageTag)"
+        git push
+      displayName: 'Commit New Image Tag to GitOps Repo'
