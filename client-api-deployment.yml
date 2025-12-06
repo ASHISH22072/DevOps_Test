@@ -1,0 +1,23 @@
+# k8s/prod/clients-api-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clients-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: clients-api
+  template:
+    metadata:
+      labels:
+        app: clients-api
+    spec:
+      containers:
+      - name: clients-api-container
+        image: acr.azurecr.io/clients-api:latest 
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DATABASE_URL
+          value: 'mongodb://clients-api-mongodb-service:27017/clientsdb'
